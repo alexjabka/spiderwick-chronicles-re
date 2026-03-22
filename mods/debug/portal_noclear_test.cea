@@ -1,0 +1,35 @@
+[ENABLE]
+// TEST 2: NOP the render data clear (sub_562440)
+// Instead of disabling portal traversal, prevent the per-frame clear.
+// Effect: rooms accumulate — once visible through a portal, they stay rendered.
+// You may need to rotate camera around to "collect" all rooms.
+//
+// If this works: rooms persist after looking through doorways
+// If visual artifacts: render data format is frame-dependent
+// If no change: clear isn't the right target
+//
+// 3 call sites for sub_562440:
+
+// In sub_48CE90 (main render pass)
+Spiderwick.exe+8CEB0:
+db 90 90 90 90 90
+
+// In sub_48A4E0
+Spiderwick.exe+8A544:
+db 90 90 90 90 90
+
+// In sub_490C20
+Spiderwick.exe+90C40:
+db 90 90 90 90 90
+
+[DISABLE]
+// Restore original: call sub_562440
+
+Spiderwick.exe+8CEB0:
+db E8 8B 55 0D 00
+
+Spiderwick.exe+8A544:
+db E8 F7 7E 0D 00
+
+Spiderwick.exe+90C40:
+db E8 FB 17 0D 00

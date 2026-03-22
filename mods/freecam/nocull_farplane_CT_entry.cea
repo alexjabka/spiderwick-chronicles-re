@@ -1,0 +1,74 @@
+[ENABLE]
+// ===== No-Cull v5 =====
+//
+// Combined approach:
+// 1. Patch UpdateVisibility jumps → PerformRoomCulling never called
+// 2. Freeze camera sector (camera_obj+0x788) → sub_488970 sees constant sector
+// 3. Freeze bitmask → all sectors stay loaded
+//
+// Enable BEFORE entering the house!
+
+// ===== Patch 1: Skip PerformRoomCulling in UpdateVisibility =====
+// jnz loc_488B5C → NOP NOP (don't jump to culling on first gate)
+Spiderwick.exe+88B51:
+  db 90 90
+
+// jz loc_488B71 → JMP loc_488B71 (always skip culling on second gate)
+Spiderwick.exe+88B5A:
+  db EB 15
+
+// ===== Freeze sector + bitmask (Lua, 16ms timer) =====
+{$lua}
+if ncFreezeTimer then
+    ncFreezeTimer.Enabled = false
+    ncFreezeTimer.destroy()
+    ncFreezeTimer = nil
+end
+
+-- Capture current sector at enable time
+local camObjPtr = readInteger(0x0072F670)
+local ncSavedSector = nil
+if camObjPtr and camObjPtr ~= 0 then
+    ncSavedSector = readInteger(camObjPtr + 0x788)
+    print(string.format("[NoCull v5] camera_obj=%08X sector=%d", camObjPtr, ncSavedSector or -1))
+end
+
+ncFreezeTimer = createTimer(nil, false)
+ncFreezeTimer.Interval = 16  -- every frame (~60fps)
+ncFreezeTimer.OnTimer = function()
+    -- Freeze bitmask
+    local world = readInteger(0x0133FEC0)
+    if world and world ~= 0 then
+        writeInteger(0x01340080, 0xFFFFFFFF)
+    end
+
+    -- Freeze camera sector
+    if ncSavedSector then
+        local co = readInteger(0x0072F670)
+        if co and co ~= 0 then
+            writeInteger(co + 0x788, ncSavedSector)
+        end
+    end
+end
+ncFreezeTimer.Enabled = true
+
+print("[NoCull v5] ENABLED — culling patched + sector frozen + bitmask frozen")
+{$asm}
+
+
+[DISABLE]
+{$lua}
+if ncFreezeTimer then
+    ncFreezeTimer.Enabled = false
+    ncFreezeTimer.destroy()
+    ncFreezeTimer = nil
+end
+print("[NoCull v5] DISABLED")
+{$asm}
+
+// Restore original jumps
+Spiderwick.exe+88B51:
+  db 75 09
+
+Spiderwick.exe+88B5A:
+  db 74 15

@@ -1,0 +1,91 @@
+[ENABLE]
+// Surgical portal bypass: widen projection matrix BEFORE portal traversal,
+// restore AFTER. Portal sees near-360 FOV → all portals pass frustum test.
+
+alloc(projBackup, 32)
+alloc(portalWideFov, 256, Spiderwick.exe)
+label(portalWideFov_restore)
+
+portalWideFov:
+  pushad
+  mov esi, [esp+$28]
+
+  // backup proj [0][0] and [1][1] at camera+$44, +$58
+  mov eax, [esi+$44]
+  mov [projBackup], eax
+  mov eax, [esi+$58]
+  mov [projBackup+4], eax
+
+  // backup VP matrix A at +$548, +$55C
+  mov eax, [esi+$548]
+  mov [projBackup+8], eax
+  mov eax, [esi+$55C]
+  mov [projBackup+$C], eax
+
+  // backup VP matrix B at +$688, +$69C
+  mov eax, [esi+$688]
+  mov [projBackup+$10], eax
+  mov eax, [esi+$69C]
+  mov [projBackup+$14], eax
+
+  // write 0.001 (IEEE 754 = $3A83126F) = very wide frustum
+  mov dword ptr [esi+$44], $3A83126F
+  mov dword ptr [esi+$58], $3A83126F
+  mov dword ptr [esi+$548], $3A83126F
+  mov dword ptr [esi+$55C], $3A83126F
+  mov dword ptr [esi+$688], $3A83126F
+  mov dword ptr [esi+$69C], $3A83126F
+
+  popad
+
+  // call original portal traversal with same args
+  push dword ptr [esp+$C]
+  push dword ptr [esp+$C]
+  push dword ptr [esp+$C]
+  call Spiderwick.exe+11ABE0
+  add esp, $0C
+
+portalWideFov_restore:
+  pushad
+  mov esi, [esp+$28]
+
+  mov eax, [projBackup]
+  mov [esi+$44], eax
+  mov eax, [projBackup+4]
+  mov [esi+$58], eax
+
+  mov eax, [projBackup+8]
+  mov [esi+$548], eax
+  mov eax, [projBackup+$C]
+  mov [esi+$55C], eax
+
+  mov eax, [projBackup+$10]
+  mov [esi+$688], eax
+  mov eax, [projBackup+$14]
+  mov [esi+$69C], eax
+
+  popad
+  ret
+
+// Patch all 3 call sites
+Spiderwick.exe+889CC:
+call portalWideFov
+
+Spiderwick.exe+8CC2D:
+call portalWideFov
+
+Spiderwick.exe+905DB:
+call portalWideFov
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalWideFov)
+dealloc(projBackup)

@@ -1,0 +1,135 @@
+[ENABLE]
+// PORTAL BYPASS v4 — saved pos + direction DOWN + wide FOV
+//
+// Override camera pos (player pos), direction (straight down),
+// FOV (177°) before portal traversal. Looking down with 177° FOV
+// covers ALL horizontal portals (doorways) in every direction.
+// Restore everything after. Freeze sector transition.
+
+{$lua}
+if savedPosAddr then
+else
+  savedPosAddr = allocateMemory(16)
+  camBackupAddr = allocateMemory(32)   -- pos(12) + fov(4) + dir(12) = 28 bytes
+  registerSymbol("savedPos", savedPosAddr)
+  registerSymbol("camBackup", camBackupAddr)
+end
+
+local base = getAddress("Spiderwick.exe")
+local camObj = readInteger(base + 0x32F670)
+if camObj and camObj ~= 0 then
+  writeFloat(savedPosAddr, readFloat(camObj + 0x6B8) or 0)
+  writeFloat(savedPosAddr + 4, readFloat(camObj + 0x6BC) or 0)
+  writeFloat(savedPosAddr + 8, readFloat(camObj + 0x6C0) or 0)
+  writeInteger(savedPosAddr + 12, readInteger(camObj + 0x788) or 0)
+  print(string.format("[Portal] Saved sector=%d", readInteger(camObj + 0x788) or -1))
+end
+{$asm}
+
+alloc(portalBypass, 512, Spiderwick.exe)
+
+portalBypass:
+  pushad
+  mov esi, [esp+$28]           // camera_obj
+
+  // === BACKUP: pos(3) + fov(1) + viewdir(3) ===
+  mov eax, [esi+$6B8]
+  mov [camBackup], eax         // pos X
+  mov eax, [esi+$6BC]
+  mov [camBackup+4], eax       // pos Y
+  mov eax, [esi+$6C0]
+  mov [camBackup+8], eax       // pos Z
+  mov eax, [esi+$124]
+  mov [camBackup+$C], eax      // FOV
+  mov eax, [esi+$568]
+  mov [camBackup+$10], eax     // view forward X
+  mov eax, [esi+$56C]
+  mov [camBackup+$14], eax     // view forward Y
+  mov eax, [esi+$570]
+  mov [camBackup+$18], eax     // view forward Z
+
+  // === OVERRIDE ===
+  // Position = saved player pos
+  mov eax, [savedPos]
+  mov [esi+$6B8], eax
+  mov eax, [savedPos+4]
+  mov [esi+$6BC], eax
+  mov eax, [savedPos+8]
+  mov [esi+$6C0], eax
+  // FOV = 177°
+  mov dword ptr [esi+$124], $40466666
+  // View direction = (0, -1, 0) = look straight down
+  mov dword ptr [esi+$568], 0
+  mov dword ptr [esi+$56C], $BF800000   // -1.0
+  mov dword ptr [esi+$570], 0
+
+  popad
+
+  // === CALL portal traversal (single, saved sector) ===
+  push dword ptr [esp+$C]      // arg3 (0)
+  push dword ptr [esp+$C]      // arg2 (camera)
+  push [savedPos+$C]           // arg1 = saved sector
+  call Spiderwick.exe+11ABE0
+  add esp, $0C
+
+  // === RESTORE everything ===
+  pushad
+  mov esi, [esp+$28]
+
+  mov eax, [camBackup]
+  mov [esi+$6B8], eax
+  mov eax, [camBackup+4]
+  mov [esi+$6BC], eax
+  mov eax, [camBackup+8]
+  mov [esi+$6C0], eax
+  mov eax, [camBackup+$C]
+  mov [esi+$124], eax
+  mov eax, [camBackup+$10]
+  mov [esi+$568], eax
+  mov eax, [camBackup+$14]
+  mov [esi+$56C], eax
+  mov eax, [camBackup+$18]
+  mov [esi+$570], eax
+
+  popad
+  ret
+
+// Patch call sites
+Spiderwick.exe+889CC:
+call portalBypass
+
+Spiderwick.exe+8CC2D:
+call portalBypass
+
+Spiderwick.exe+905DB:
+call portalBypass
+
+// Freeze sector — NOP transition write
+Spiderwick.exe+39356:
+db 90 90 90 90 90 90
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+Spiderwick.exe+39356:
+db 89 86 88 07 00 00
+
+dealloc(portalBypass)
+
+{$lua}
+if savedPosAddr then
+  unregisterSymbol("savedPos")
+  unregisterSymbol("camBackup")
+  deAlloc(savedPosAddr)
+  deAlloc(camBackupAddr)
+  savedPosAddr = nil
+  camBackupAddr = nil
+end
+{$asm}

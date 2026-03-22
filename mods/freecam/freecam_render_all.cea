@@ -1,0 +1,112 @@
+[ENABLE]
+// ===== Freecam Addon: Render ALL Sectors =====
+//
+// Three graceful patches to make ALL rooms render always:
+//
+// Patch 1: Zero frustum clipping planes in SutherlandHodgmanClip
+//   All portal polygons pass clip test → recursive traversal finds ALL sectors.
+//
+// Patch 2: Raise sector render cap from 5 to 16
+//   VM render submit (0x561A20) allows up to 16 sectors per frame.
+//
+// Patch 3: IsSectorLoaded always returns true
+//   PortalTraversal_Native skips unloaded sectors. We force all loaded.
+//   ASM hook (not Lua timer) — runs at exact moment of check.
+
+alloc(fc_renderall, 4)
+registersymbol(fc_renderall)
+fc_renderall:
+  dd 1
+
+// ===== Patch 1: Zero frustum planes =====
+alloc(frustumHook, $100, Spiderwick.exe+1AC250)
+label(fh_normal)
+label(fh_return)
+
+frustumHook:
+  cmp dword ptr [fc_renderall], 1
+  jne fh_normal
+
+  push edi
+  push eax
+  push ecx
+  lea edi, [ecx+$140]
+  xor eax, eax
+  mov ecx, 24
+  rep stosd
+  pop ecx
+  pop eax
+  pop edi
+
+fh_normal:
+  sub esp, $18
+  mov eax, [esp+$1C]
+  jmp fh_return
+
+assert(Spiderwick.exe+1AC250, 83 EC 18 8B 44 24 1C)
+Spiderwick.exe+1AC250:
+  jmp frustumHook
+  nop
+  nop
+fh_return:
+
+// ===== Patch 2: Sector render cap 5 → 16 =====
+assert(Spiderwick.exe+161A28, 05)
+Spiderwick.exe+161A28:
+  db 10
+
+// ===== Patch 3: IsSectorLoaded → always true =====
+alloc(loadedHook, $40, Spiderwick.exe+17E0D0)
+label(ld_original)
+label(ld_return)
+
+loadedHook:
+  push ebx
+  mov ebx, [fc_renderall]
+  cmp ebx, 1
+  pop ebx
+  jne ld_original
+
+  // Force: all sectors are "loaded"
+  mov al, 1
+  ret
+
+ld_original:
+  // Original: mov eax,[esp+4]; lea eax,[eax+eax*2]
+  mov eax, [esp+4]
+  lea eax, [eax+eax*2]
+  jmp ld_return
+
+assert(Spiderwick.exe+17E0D0, 8B 44 24 04 8D 04 40)
+Spiderwick.exe+17E0D0:
+  jmp loadedHook
+  nop
+  nop
+ld_return:
+
+{$lua}
+print("[FC] Render ALL — 3 patches active:")
+print("[FC]   1. Frustum planes zeroed (all portals pass)")
+print("[FC]   2. Sector cap 5→16")
+print("[FC]   3. IsSectorLoaded=true always")
+print("[FC]   Angle culling remains — need camera data fix")
+{$asm}
+
+[DISABLE]
+Spiderwick.exe+1AC250:
+  db 83 EC 18 8B 44 24 1C
+
+Spiderwick.exe+161A28:
+  db 05
+
+Spiderwick.exe+17E0D0:
+  db 8B 44 24 04 8D 04 40
+
+unregistersymbol(fc_renderall)
+dealloc(fc_renderall)
+dealloc(frustumHook)
+dealloc(loadedHook)
+
+{$lua}
+print("[FC] Render ALL disabled")
+{$asm}

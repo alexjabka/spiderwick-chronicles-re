@@ -1,0 +1,66 @@
+# Build artifacts
+tools/spiderview/build/
+mods/spidermod/build*/
+mods/spidermod/lib/
+*.obj
+*.lib
+*.dll
+*.exe
+*.exp
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# IDE / editor
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln
+*.vcxproj*
+imgui.ini
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDA Pro databases (large, binary, user-specific)
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# Game data (not ours to distribute)
+*.zwd
+*.pcw
+*.pcwb
+*.wad
+*.bik
+*.seg
+*.bnk
+Spiderwick.exe
+
+# Extracted assets
+export_*
+*.dds
+*.obj
+*.mtl
+*.glb
+texref_dump.txt
+batch_sentinel_dump.txt
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+spiderview_log.txt

@@ -1,0 +1,82 @@
+[ENABLE]
+// Combined approach:
+// 1) Wide FOV (3.1 rad) during portal traversal only
+// 2) Freeze camera sector to saved value (player's sector when activated)
+// 3) Override portal traversal sector arg to frozen sector
+//
+// Activate this WHILE STANDING IN THE ROOM you want to photograph.
+// The portal traversal will always start from that room with wide FOV.
+
+alloc(fovBackup, 8)
+alloc(frozenSector, 4)
+alloc(portalFix, 196, Spiderwick.exe)
+
+// Save current camera sector on enable
+{$lua}
+local base = getAddress("Spiderwick.exe")
+local camObj = readInteger(base + 0x32F670)
+if camObj and camObj ~= 0 then
+  local sector = readInteger(camObj + 0x788)
+  if sector then
+    writeInteger(getAddress("frozenSector"), sector)
+    print(string.format("[Portal] Frozen sector = %d", sector))
+  end
+end
+{$asm}
+
+portalFix:
+  // Widen FOV
+  pushad
+  mov esi, [esp+$28]           // camera_obj (arg2)
+  mov eax, [esi+$124]
+  mov [fovBackup], eax
+  mov dword ptr [esi+$124], $40466666    // 3.1 rad
+  popad
+
+  // Call with frozen sector instead of original
+  push dword ptr [esp+$C]      // arg3 (0)
+  push dword ptr [esp+$C]      // arg2 (camera)
+  push [frozenSector]           // arg1 = frozen sector (player's room)
+  call Spiderwick.exe+11ABE0
+  add esp, $0C
+
+  // Restore FOV
+  pushad
+  mov esi, [esp+$28]
+  mov eax, [fovBackup]
+  mov [esi+$124], eax
+  popad
+  ret
+
+// Also freeze camera sector write at SectorTransition (+39356)
+// Original: mov [esi+788h],eax → NOP (prevent sector change)
+alloc(sectorFreeze, 16, Spiderwick.exe)
+sectorFreeze:
+  mov eax, [frozenSector]
+  mov [esi+$788], eax
+  ret
+
+// Patch portal traversal
+Spiderwick.exe+889CC:
+call portalFix
+
+Spiderwick.exe+8CC2D:
+call portalFix
+
+Spiderwick.exe+905DB:
+call portalFix
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalFix)
+dealloc(fovBackup)
+dealloc(frozenSector)
+dealloc(sectorFreeze)

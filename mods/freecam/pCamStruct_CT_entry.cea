@@ -1,0 +1,44 @@
+[ENABLE]
+// ===== pCamStruct Pointer Capture =====
+//
+// Hooks BuildViewMatrix (sub_5AA1B0) at ENTRY.
+// ECX = this = camera struct pointer (thiscall convention).
+// Called every frame from the render pipeline.
+//
+// Camera struct layout:
+//   +0x000  rotation matrix (3x4 floats)
+//   +0x388  camera position block
+//   +0x3B8  eye position (X, Y, Z)
+
+alloc(pCamHook, 64)
+registersymbol(pCamHook)
+
+alloc(pCamStruct, 8)
+registersymbol(pCamStruct)
+
+pCamStruct:
+  dq 0
+
+pCamHook:
+  mov [pCamStruct], ecx
+  sub esp, 30
+  mov eax, [esp+3C]
+  jmp pCamReturn
+
+assert(Spiderwick.exe+1AA1B0, 83 EC 30 8B 44 24 3C)
+Spiderwick.exe+1AA1B0:
+  jmp pCamHook
+  nop
+  nop
+pCamReturn:
+
+
+[DISABLE]
+Spiderwick.exe+1AA1B0:
+  db 83 EC 30 8B 44 24 3C
+
+unregistersymbol(pCamStruct)
+dealloc(pCamStruct)
+
+unregistersymbol(pCamHook)
+dealloc(pCamHook)

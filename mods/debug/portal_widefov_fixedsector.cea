@@ -1,0 +1,58 @@
+[ENABLE]
+// Combined: wide FOV + fixed sector for portal traversal
+// 1) Set FOV to 3.1 rad (~177°) before traversal
+// 2) Override sector arg to 4 (1stFoyer — central hub, 8 portals)
+// 3) Restore FOV after traversal
+//
+// The portal traversal recurses through portals, so from the foyer
+// with wide FOV it should reach most/all rooms.
+
+alloc(fovBackup, 8)
+alloc(portalFix, 196, Spiderwick.exe)
+
+portalFix:
+  // Widen FOV
+  pushad
+  mov esi, [esp+$28]           // camera_obj (arg2)
+  mov eax, [esi+$124]
+  mov [fovBackup], eax
+  mov dword ptr [esi+$124], $40466666    // 3.1 rad
+  popad
+
+  // Override sector to 4 (Foyer) and call
+  push dword ptr [esp+$C]      // arg3 (0)
+  push dword ptr [esp+$C]      // arg2 (camera)
+  push 4                        // arg1 = sector 4 (Foyer) instead of original
+  call Spiderwick.exe+11ABE0
+  add esp, $0C
+
+  // Restore FOV
+  pushad
+  mov esi, [esp+$28]
+  mov eax, [fovBackup]
+  mov [esi+$124], eax
+  popad
+  ret
+
+// Patch all 3 call sites
+Spiderwick.exe+889CC:
+call portalFix
+
+Spiderwick.exe+8CC2D:
+call portalFix
+
+Spiderwick.exe+905DB:
+call portalFix
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalFix)
+dealloc(fovBackup)

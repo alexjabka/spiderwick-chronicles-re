@@ -1,0 +1,9 @@
+[ENABLE]
+// v29 — ONLY Layer 1: force all sectors loaded
+// ONE patch, 5 bytes. Nothing else.
+Spiderwick.exe+17F16B:
+db B8 FF 3F 00 00
+
+[DISABLE]
+Spiderwick.exe+17F16B:
+db A1 80 00 34 01

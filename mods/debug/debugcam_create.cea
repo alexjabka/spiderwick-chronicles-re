@@ -1,0 +1,29 @@
+[ENABLE]
+// ===== Create DebugCameraManager =====
+//
+// Allocates memory and calls the constructor (sub_440910).
+// Constructor registers with input system automatically.
+
+alloc(dbgCamObj, 128)
+registersymbol(dbgCamObj)
+
+alloc(dbgCamInit, 128, Spiderwick.exe)
+registersymbol(dbgCamInit)
+
+dbgCamInit:
+  pushad
+  // memset(dbgCamObj, 0, 80)
+  mov edi, dbgCamObj
+  xor eax, eax
+  mov ecx, 20
+  rep stosd
+  // Call constructor: sub_440910(this=dbgCamObj)
+  mov ecx, dbgCamObj
+  call Spiderwick.exe+40910
+  popad
+  ret
+
+[DISABLE]
+unregistersymbol(dbgCamInit)
+dealloc(dbgCamInit)
+// NOT freeing dbgCamObj — registered with input system

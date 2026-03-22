@@ -1,0 +1,69 @@
+[ENABLE]
+// ===== pPlayer — Current Player Character Pointer =====
+//
+// Replaces sub_44F890 (GetPlayerCharacter) with instrumented copy.
+// sub_44F890 iterates the character linked list [0x7307D8],
+// calling vtable[0x13] (IsPlayerControlled) on each.
+// Returns first character where IsPlayerControlled() == true.
+//
+// Called 60+ times per frame from camera, gameplay, AI systems.
+// Pointer is ALWAYS fresh and follows character switching
+// (Jared/Simon/Mallory).
+//
+// Player object layout (ClPlayerObj inherits ClCharacterObj):
+//   +0x68  position X (float)
+//   +0x6C  position Y (float)
+//   +0x70  position Z (float)
+//   +0x5A0 next character in linked list
+//
+// Replaces: pPlayerAddy (old hook at +87DF6, captured loop entity)
+
+alloc(pPlayerCode, 128, Spiderwick.exe+4F890)
+registersymbol(pPlayerCode)
+label(ppl_loop)
+label(ppl_done)
+
+alloc(pPlayer, 8)
+registersymbol(pPlayer)
+
+pPlayer:
+  dq 0
+
+// Full function replica + save result
+pPlayerCode:
+  push esi
+  mov esi, [007307D8]
+  test esi, esi
+  jz ppl_done
+ppl_loop:
+  mov eax, [esi]
+  mov edx, [eax+4C]
+  mov ecx, esi
+  call edx
+  test al, al
+  jnz ppl_done
+  mov esi, [esi+5A0]
+  test esi, esi
+  jnz ppl_loop
+ppl_done:
+  mov eax, esi
+  mov [pPlayer], eax
+  pop esi
+  ret
+
+assert(Spiderwick.exe+4F890, 56 8B 35 D8 07 73 00)
+Spiderwick.exe+4F890:
+  jmp pPlayerCode
+  nop
+  nop
+
+
+[DISABLE]
+Spiderwick.exe+4F890:
+  db 56 8B 35 D8 07 73 00
+
+unregistersymbol(pPlayer)
+dealloc(pPlayer)
+
+unregistersymbol(pPlayerCode)
+dealloc(pPlayerCode)

@@ -1,0 +1,46 @@
+[ENABLE]
+{$lua}
+(function()
+  -- DIAG: Zero fields of slot[2] component WITHOUT changing vtable
+  local base = getAddress("Spiderwick.exe")
+  local camObj = readInteger(base + 0x32F670)
+  if not camObj or camObj == 0 then return end
+  local manager = readInteger(camObj + 0x8D8)
+  if not manager or manager == 0 then return end
+  local count = readInteger(manager + 0xC8)
+
+  local slot = count - 1
+  local comp = readInteger(manager + 0x88 + slot * 4)
+  local vt = readInteger(comp)
+
+  -- Backup
+  dbgCamBackup = {}
+  dbgCamCompPtr = comp
+  for i = 0, 0x7F, 4 do dbgCamBackup[i] = readInteger(comp + i) end
+
+  -- Dump fields BEFORE zeroing
+  print(string.format("[Diag] slot[%d] comp=%X vtable=%X (NOT changing vtable)", slot, comp, vt))
+  for off = 0x0C, 0x2C, 4 do
+    print(string.format("  +%02X = %08X (float: %.4f)", off, readInteger(comp+off) or 0, readFloat(comp+off) or 0))
+  end
+
+  -- Zero movement fields only, keep vtable
+  writeInteger(comp + 0x0C, 0)
+  writeInteger(comp + 0x14, 0)
+  writeInteger(comp + 0x18, 0)
+  writeInteger(comp + 0x1C, 0)
+  writeInteger(comp + 0x20, 0)
+  writeInteger(comp + 0x24, 0)
+  writeBytes(comp + 0x28, 0)
+
+  print("[Diag] Fields zeroed, vtable UNCHANGED. If stable = vtable change is the problem")
+end)()
+
+[DISABLE]
+{$lua}
+(function()
+  if dbgCamCompPtr and dbgCamBackup then
+    for i = 0, 0x7F, 4 do writeInteger(dbgCamCompPtr + i, dbgCamBackup[i]) end
+  end
+  print("[Diag] Restored")
+end)()

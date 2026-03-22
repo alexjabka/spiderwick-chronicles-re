@@ -1,0 +1,51 @@
+[ENABLE]
+// Hook portal traversal: call sub_51ABE0 for EVERY sector (0..N-1)
+// v3: Fixed — use EDI for sector count (callee-saved, not clobbered by cdecl)
+// No sub_516900 calls — don't change active sector state.
+
+alloc(portalAll, 128, Spiderwick.exe)
+label(portalAll_loop)
+label(portalAll_ok)
+
+portalAll:
+  pushad
+  mov ebp, [esp+28]       // camera_obj (arg2: +20h pushad + 8)
+  mov edi, [0133FEF0]     // sector count (EDI = callee-saved)
+  cmp edi, 14
+  jle short portalAll_ok
+  mov edi, 14             // safety cap
+portalAll_ok:
+  xor ebx, ebx            // EBX = loop counter (callee-saved)
+portalAll_loop:
+  push 0                  // arg3 = 0
+  push ebp                // arg2 = camera_obj
+  push ebx                // arg1 = sector_i
+  call Spiderwick.exe+11ABE0
+  add esp, 0C
+  inc ebx
+  cmp ebx, edi
+  jl portalAll_loop
+  popad
+  ret
+
+// Patch call sites
+Spiderwick.exe+889CC:
+call portalAll
+
+Spiderwick.exe+8CC2D:
+call portalAll
+
+Spiderwick.exe+905DB:
+call portalAll
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalAll)

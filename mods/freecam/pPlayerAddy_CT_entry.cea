@@ -1,0 +1,42 @@
+[ENABLE]
+// ===== pPlayerAddy — Player Object Pointer Capture =====
+//
+// Hooks sub_487D70 chain at +87DF6 (sector distance check).
+// EDI = player/entity object at this point.
+//
+// Player object layout:
+//   +0x68  position X
+//   +0x6C  position Y
+//   +0x70  position Z
+
+alloc(pPlayerHook, 64)
+registersymbol(pPlayerHook)
+
+alloc(pPlayerAddy, 8)
+registersymbol(pPlayerAddy)
+
+pPlayerAddy:
+  dq 0
+
+pPlayerHook:
+  mov [pPlayerAddy], edi
+  fld dword ptr [edi+70]
+  fsub dword ptr [esi+1C]
+  jmp pPlayerReturn
+
+assert(Spiderwick.exe+87DF6, D9 47 70 D8 66 1C)
+Spiderwick.exe+87DF6:
+  jmp pPlayerHook
+  nop
+pPlayerReturn:
+
+
+[DISABLE]
+Spiderwick.exe+87DF6:
+  db D9 47 70 D8 66 1C
+
+unregistersymbol(pPlayerAddy)
+dealloc(pPlayerAddy)
+
+unregistersymbol(pPlayerHook)
+dealloc(pPlayerHook)

@@ -1,0 +1,55 @@
+[ENABLE]
+// Test: modify RAW FOV at camera+0x124 before portal traversal
+// (previous test modified projection MATRIX — didn't work)
+// The kallis VM probably reads FOV directly, not from matrix.
+//
+// FOV 3.1 radians ≈ 177 degrees (near hemisphere)
+// IEEE 754: 3.1 = 0x40466666
+
+alloc(fovBackup, 8)
+alloc(portalFov, 128, Spiderwick.exe)
+
+portalFov:
+  pushad
+  mov esi, [esp+$28]           // camera_obj (arg2)
+  // backup FOV
+  mov eax, [esi+$124]
+  mov [fovBackup], eax
+  // set very wide FOV
+  mov dword ptr [esi+$124], $40466666    // 3.1 rad ≈ 177°
+  popad
+  // call original
+  push dword ptr [esp+$C]
+  push dword ptr [esp+$C]
+  push dword ptr [esp+$C]
+  call Spiderwick.exe+11ABE0
+  add esp, $0C
+  // restore FOV
+  pushad
+  mov esi, [esp+$28]
+  mov eax, [fovBackup]
+  mov [esi+$124], eax
+  popad
+  ret
+
+Spiderwick.exe+889CC:
+call portalFov
+
+Spiderwick.exe+8CC2D:
+call portalFov
+
+Spiderwick.exe+905DB:
+call portalFov
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalFov)
+dealloc(fovBackup)

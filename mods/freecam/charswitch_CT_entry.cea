@@ -1,0 +1,107 @@
+[ENABLE]
+// ===== Character Switch — Cycle Jared/Simon/Mallory + Respawn =====
+//
+// F7 = cycle character + trigger respawn
+//
+// Writes /Player/Character game state (1=Jared, 2=Simon, 3=Mallory)
+// then calls sauRespawn (sub_4892B0) to reload with new character.
+
+// ASM stub: GetGameStatePtr(hash) → returns ptr to value
+// stdcall: push hash_value; call csGetGS → EAX = ptr (or 0)
+alloc(csGetGS, 64, Spiderwick.exe)
+registersymbol(csGetGS)
+
+csGetGS:
+  push [esp+4]                     // push hash
+  call Spiderwick.exe+139630       // sub_539630(hash) — find index by hash (cdecl)
+  add esp, 4
+  cmp eax, -1
+  jle csGetGS_fail
+  push eax                         // push index
+  mov ecx, Spiderwick.exe+A57F68   // byte_E57F68 — game state object
+  call Spiderwick.exe+1392C0       // sub_5392C0(index) — thiscall, returns value ptr
+  ret 4
+csGetGS_fail:
+  xor eax, eax
+  ret 4
+
+{$lua}
+--[[
+  Character Switch
+  F7: cycle Jared → Simon → Mallory + respawn
+]]
+
+-- Hash of "/Player/Character" = 0xA488A96A (pre-computed)
+local PC_HASH = 0xA488A96A
+local BASE = getAddress("Spiderwick.exe")
+
+local function getGSPtr(hash)
+  local fn = getAddress("csGetGS")
+  if not fn or fn == 0 then return nil end
+  local ptr = executeCodeEx(0, 2000, fn, hash)
+  if ptr and ptr ~= 0 then return ptr end
+  return nil
+end
+
+local csIdx = 0  -- will detect current on first press
+local csCD = false
+
+if csTimer then csTimer.Destroy() end
+csTimer = createTimer(getMainForm())
+csTimer.Interval = 50
+csTimer.OnTimer = function()
+  if isKeyPressed(0x76) then  -- F7
+    if not csCD then
+      csCD = true
+      local names = {[1]="Jared", [2]="Simon", [3]="Mallory"}
+
+      -- Read current value
+      local ptr = getGSPtr(PC_HASH)
+      if not ptr then
+        print("[CharSwitch] ERROR: can't find /Player/Character in game state")
+        return
+      end
+
+      local cur = readInteger(ptr)
+      print(string.format("[CharSwitch] gsPtr=%08X cur=%s", ptr, tostring(cur)))
+
+      -- Cycle
+      if cur and cur >= 1 and cur <= 3 then
+        csIdx = cur
+      end
+      csIdx = (csIdx % 3) + 1
+
+      -- Write
+      writeInteger(ptr, csIdx)
+      print(string.format("[CharSwitch] wrote %d (%s)", csIdx, names[csIdx] or "?"))
+
+      -- Verify
+      local verify = readInteger(ptr)
+      print(string.format("[CharSwitch] verify: %s", tostring(verify)))
+
+      -- Trigger respawn
+      executeCodeEx(0, 3000, BASE + 0x892B0)
+      print(string.format("[CharSwitch] respawn triggered for %s", names[csIdx] or "?"))
+    end
+  else csCD = false end
+end
+csTimer.Enabled = true
+
+print("============================================")
+print("  Character Switch")
+print("  F7 = cycle Jared/Simon/Mallory + respawn")
+print("============================================")
+
+{$asm}
+
+[DISABLE]
+{$lua}
+if csTimer then
+  csTimer.Destroy()
+  csTimer = nil
+end
+print("[CharSwitch] unloaded")
+{$asm}
+
+unregistersymbol(csGetGS)
+dealloc(csGetGS)

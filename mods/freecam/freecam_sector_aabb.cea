@@ -1,0 +1,205 @@
+[ENABLE]
+// ===== Freecam Addon: AABB Sector Tracking =====
+//
+// Reads sector bounding boxes from world state (sector_data+0x10/+0x20).
+// Every tick: finds which sector contains fc_eye, writes to camera_obj+0x788.
+// Portal traversal starts from correct sector → rooms render when you fly into them.
+//
+// REQUIRES: freecam_core.cea enabled first (provides fc_enabled, fc_eye symbols)
+// EFFECT: rooms visible through portals from the freecam's current sector render.
+//         Rooms NOT connected via portals from current sector stay invisible.
+
+{$lua}
+--[[
+  AABB Sector Tracking — reads sector bounds from g_WorldState,
+  does point-in-box test for all sectors, writes matching sector
+  to camera_obj+0x788 every frame.
+
+  Sector data layout:
+    sector_data + 0x10: minX, minY, minZ, 1.0  (vec4)
+    sector_data + 0x20: maxX, maxY, maxZ, 1.0  (vec4)
+
+  World state:
+    g_WorldState (0xE416C4) + 0x64: sector pointer array
+    dword_E416C8: sector count
+]]
+
+local f7CD = false
+
+local function addr(sym)
+  local ok, a = pcall(getAddress, sym)
+  if not ok or not a or a == 0 then return nil end
+  return a
+end
+
+local function findSectorAABB(x, y, z)
+  local ws = readInteger(0xE416C4)
+  if not ws or ws == 0 then return nil end
+  local secArr = readInteger(ws + 0x64)
+  if not secArr then return nil end
+  local secCnt = readInteger(0xE416C8) or 0
+  for i = 0, secCnt - 1 do
+    local sd = readInteger(secArr + 4 * i)
+    if sd and sd ~= 0 then
+      local minX = readFloat(sd + 0x10)
+      local minY = readFloat(sd + 0x14)
+      local minZ = readFloat(sd + 0x18)
+      local maxX = readFloat(sd + 0x20)
+      local maxY = readFloat(sd + 0x24)
+      local maxZ = readFloat(sd + 0x28)
+      if minX and maxX and
+         x >= minX and x <= maxX and
+         y >= minY and y <= maxY and
+         z >= minZ and z <= maxZ then
+        return i
+      end
+    end
+  end
+  -- No exact match: find NEAREST sector by distance to AABB center
+  local bestDist = 1e30
+  local bestSector = 0
+  for i = 0, secCnt - 1 do
+    local sd = readInteger(secArr + 4 * i)
+    if sd and sd ~= 0 then
+      local mnX = readFloat(sd + 0x10)
+      local mxX = readFloat(sd + 0x20)
+      local mnY = readFloat(sd + 0x14)
+      local mxY = readFloat(sd + 0x24)
+      local mnZ = readFloat(sd + 0x18)
+      local mxZ = readFloat(sd + 0x28)
+      if mnX and mxX then
+        local cx = (mnX + mxX) * 0.5
+        local cy = (mnY + mxY) * 0.5
+        local cz = (mnZ + mxZ) * 0.5
+        local dx, dy, dz = x - cx, y - cy, z - cz
+        local d = dx*dx + dy*dy + dz*dz
+        if d < bestDist then
+          bestDist = d
+          bestSector = i
+        end
+      end
+    end
+  end
+  return bestSector
+end
+
+local function sectorTick()
+  local fe = addr("fc_enabled")
+  if not fe or readInteger(fe) ~= 1 then return end
+
+  local eye = addr("fc_eye")
+  if not eye then return end
+  local x = readFloat(eye)
+  local y = readFloat(eye + 4)
+  local z = readFloat(eye + 8)
+  if not x then return end
+
+  local base = getAddress("Spiderwick.exe")
+  if not base then return end
+  local camObj = readInteger(base + 0x32F670)
+  if not camObj or camObj == 0 then return end
+
+  local sector = findSectorAABB(x, y, z)
+  if sector then
+    writeInteger(camObj + 0x788, sector)
+  end
+
+  -- Update camera_obj position
+  writeFloat(camObj + 0x6B8, x)
+  writeFloat(camObj + 0x6BC, y)
+  writeFloat(camObj + 0x6C0, z)
+
+  -- Build and write freecam view matrix to camera_obj+0x790
+  -- FrustumSetup_VM reads this matrix for frustum/projection computation.
+  -- Without this, the frustum uses stale camera direction → angle-dependent culling.
+  local ft = addr("fc_target")
+  if ft then
+    local tx = readFloat(ft)     -- target X
+    local ty = readFloat(ft + 4) -- target Y
+    local tz = readFloat(ft + 8) -- target Z
+    if tx then
+      -- Compute camera basis vectors from eye → target
+      local fx = tx - x
+      local fy = ty - y
+      local fz = tz - z
+      -- Normalize forward
+      local flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+      if flen > 0.0001 then
+        fx = fx / flen
+        fy = fy / flen
+        fz = fz / flen
+      end
+      -- World up = (0, 0, 1)
+      -- Right = cross(forward, up)
+      local rx = fy * 1 - fz * 0  -- fy
+      local ry = fz * 0 - fx * 1  -- -fx
+      local rz = fx * 0 - fy * 0  -- 0
+      local rlen = math.sqrt(rx*rx + ry*ry + rz*rz)
+      if rlen > 0.0001 then
+        rx = rx / rlen
+        ry = ry / rlen
+        rz = rz / rlen
+      end
+      -- Up = cross(right, forward)
+      local ux = ry * fz - rz * fy
+      local uy = rz * fx - rx * fz
+      local uz = rx * fy - ry * fx
+
+      -- View matrix (row-major, D3D style)
+      -- Row 0: right
+      -- Row 1: up
+      -- Row 2: forward
+      -- Row 3: -dot(basis, eye)
+      local m = camObj + 0x790
+      writeFloat(m,    rx); writeFloat(m+4,  ry); writeFloat(m+8,  rz); writeFloat(m+12, 0)
+      writeFloat(m+16, ux); writeFloat(m+20, uy); writeFloat(m+24, uz); writeFloat(m+28, 0)
+      writeFloat(m+32, fx); writeFloat(m+36, fy); writeFloat(m+40, fz); writeFloat(m+44, 0)
+      local tdx = -(rx*x + ry*y + rz*z)
+      local tdy = -(ux*x + uy*y + uz*z)
+      local tdz = -(fx*x + fy*y + fz*z)
+      writeFloat(m+48, tdx); writeFloat(m+52, tdy); writeFloat(m+56, tdz); writeFloat(m+60, 1)
+    end
+  end
+
+  -- F7: dump sector bounding boxes
+  if isKeyPressed(0x76) then
+    if not f7CD then
+      f7CD = true
+      local ws = readInteger(0xE416C4)
+      if ws and ws ~= 0 then
+        local secArr = readInteger(ws + 0x64)
+        local secCnt = readInteger(0xE416C8) or 0
+        print(string.format("[AABB] %d sectors, camera in sector %s", secCnt, sector or "NONE"))
+        for i = 0, math.min(secCnt - 1, 13) do
+          local sd = readInteger(secArr + 4 * i)
+          if sd and sd ~= 0 then
+            print(string.format("[AABB]   %2d: min=(%.1f,%.1f,%.1f) max=(%.1f,%.1f,%.1f)",
+              i,
+              readFloat(sd+0x10) or 0, readFloat(sd+0x14) or 0, readFloat(sd+0x18) or 0,
+              readFloat(sd+0x20) or 0, readFloat(sd+0x24) or 0, readFloat(sd+0x28) or 0))
+          end
+        end
+      end
+    end
+  else f7CD = false end
+end
+
+if fcSectorTimer then fcSectorTimer.Destroy() end
+fcSectorTimer = createTimer(getMainForm())
+fcSectorTimer.Interval = 16
+fcSectorTimer.OnTimer = sectorTick
+fcSectorTimer.Enabled = true
+
+print("[FC] AABB sector tracking enabled")
+print("[FC] F7 = dump sector bounding boxes")
+
+{$asm}
+
+[DISABLE]
+{$lua}
+if fcSectorTimer then
+  fcSectorTimer.Destroy()
+  fcSectorTimer = nil
+end
+print("[FC] AABB sector tracking disabled")
+{$asm}

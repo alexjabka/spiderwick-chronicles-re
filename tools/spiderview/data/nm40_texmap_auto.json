@@ -1,0 +1,100 @@
+{
+  "_comment": "Auto-generated from SpiderMod capture + AWAD matching",
+  "characters": [
+    {
+      "bones": 47,
+      "nm40": "0xBCEBA6AC"
+    },
+    {
+      "bones": 48,
+      "nm40": "0x5600A2D4",
+      "diffuse": "0x43AC3289"
+    },
+    {
+      "bones": 48,
+      "nm40": "0x5600A2D4"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C",
+      "diffuse": "0x3D829FDB",
+      "detail": "0x7702420F"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 51,
+      "nm40": "0xFB33692C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C"
+    },
+    {
+      "bones": 53,
+      "nm40": "0x23AE159C",
+      "diffuse": "0x9589F0E7",
+      "detail": "0xE735E5D7"
+    },
+    {
+      "bones": 56,
+      "nm40": "0x2B5B0254"
+    },
+    {
+      "bones": 56,
+      "nm40": "0x2B5B0254"
+    },
+    {
+      "bones": 56,
+      "nm40": "0x2B5B0254"
+    },
+    {
+      "bones": 56,
+      "nm40": "0x2B5B0254",
+      "diffuse": "0x687335CB",
+      "detail": "0x0E55B3AF"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+[ENABLE]
+// Force ALL sectors to render — call portal traversal for every sector.
+// v5: EDI for count (callee-saved), sub_516900 before each call,
+// restore original sector after loop.
+
+alloc(portalAll, 196, Spiderwick.exe)
+label(portalAll_loop)
+label(portalAll_ok)
+
+portalAll:
+  pushad
+  mov ebp, [esp+$28]          // camera_obj (arg2)
+  mov esi, [esp+$24]          // original sector (arg1) — save for restore
+
+  mov edi, [01340000+$FEF0]   // sector count = [0x0133FEF0] (CE can't do [0133FEF0])
+  test edi, edi
+  jle portalAll_ok
+  cmp edi, $0E
+  jle short portalAll_ok
+  mov edi, $0E                // cap at 14
+portalAll_ok:
+  xor ebx, ebx
+
+portalAll_loop:
+  // Set sector state (required before traversal)
+  push ebx
+  call Spiderwick.exe+116900   // sub_516900(sector_i)
+  add esp, 4
+
+  // Portal traversal from sector_i
+  push 0
+  push ebp
+  push ebx
+  call Spiderwick.exe+11ABE0   // sub_51ABE0(sector_i, camera, 0)
+  add esp, $0C
+
+  inc ebx
+  cmp ebx, edi
+  jl portalAll_loop
+
+  // Restore original sector
+  push esi
+  call Spiderwick.exe+116900
+  add esp, 4
+
+  popad
+  ret
+
+Spiderwick.exe+889CC:
+call portalAll
+
+Spiderwick.exe+8CC2D:
+call portalAll
+
+Spiderwick.exe+905DB:
+call portalAll
+
+[DISABLE]
+Spiderwick.exe+889CC:
+db E8 0F 22 09 00
+
+Spiderwick.exe+8CC2D:
+db E8 AE DF 08 00
+
+Spiderwick.exe+905DB:
+db E8 00 A6 08 00
+
+dealloc(portalAll)

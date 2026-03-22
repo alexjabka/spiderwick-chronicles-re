@@ -1,0 +1,602 @@
+[ENABLE]
+// ===== Spiderwick Freecam v20 — Graceful (no monocle mode) =====
+//
+// v20: COMPLETE REWORK based on deep RE of camera + render pipeline.
+//   MonocleUpdate (sub_43DA50) returns 1 WITHOUT setting monocle flags.
+//   MainCameraComponent skips normal camera, but engine stays in normal mode.
+//   CameraTick VM takes normal path → native block fires → sector tracking works.
+//   PostTraversal_VM calls sub_1C93F90 → full portal render pipeline active.
+//
+// Hook 1: sub_5299A0 — save game direction + replace eye/target
+// Hook 2: sub_4356F0 — skip camera position copy
+// Hook 3: sub_43DA50 — return 1 (skip normal camera) + set bit 0x20
+// Hook 6: 0x439449  — CameraTick position stamp: write fc_eye instead of player
+
+// ===== Shared data block =====
+alloc(fcData, $100)
+registersymbol(fcData)
+
+label(fc_enabled)
+registersymbol(fc_enabled)
+label(fc_eye)
+registersymbol(fc_eye)
+label(fc_target)
+registersymbol(fc_target)
+label(fc_game_eye)
+registersymbol(fc_game_eye)
+label(fc_game_target)
+registersymbol(fc_game_target)
+label(fc_mono_this)
+registersymbol(fc_mono_this)
+
+fcData:
+fc_enabled:
+  dd 0
+fc_eye:
+  dd (float)0
+  dd (float)0
+  dd (float)0
+fc_target:
+  dd (float)0
+  dd (float)0
+  dd (float)0
+fc_game_eye:
+  dd (float)0
+  dd (float)0
+  dd (float)0
+fc_game_target:
+  dd (float)0
+  dd (float)0
+  dd (float)0
+fc_mono_this:
+  dd 0
+fc_prev_eye:
+  dd (float)0
+  dd (float)0
+  dd (float)0
+
+// ===== Hook 1: sub_5299A0 — save game direction + feed our eye/target =====
+alloc(fcCode, $100, Spiderwick.exe+1299A0)
+label(fc_normal)
+label(fc_return)
+
+fcCode:
+  cmp dword ptr [fc_enabled], 1
+  jne fc_normal
+
+  push eax
+  push ebx
+
+  // Save game's eye position
+  // Stack: [esp]=ebx, [esp+4]=eax, [esp+8]=retaddr, [esp+C]=arg1(eye*), [esp+10]=arg2(target*)
+  mov eax, [esp+0C]
+  mov ebx, [eax]
+  mov [fc_game_eye], ebx
+  mov ebx, [eax+4]
+  mov [fc_game_eye+4], ebx
+  mov ebx, [eax+8]
+  mov [fc_game_eye+8], ebx
+
+  // Save game's target position
+  mov eax, [esp+10]
+  mov ebx, [eax]
+  mov [fc_game_target], ebx
+  mov ebx, [eax+4]
+  mov [fc_game_target+4], ebx
+  mov ebx, [eax+8]
+  mov [fc_game_target+8], ebx
+
+  pop ebx
+  pop eax
+
+  // Replace args with our pointers
+  mov dword ptr [esp+4], fc_eye
+  mov dword ptr [esp+8], fc_target
+
+fc_normal:
+  sub esp,10
+  fldz
+  jmp fc_return
+
+assert(Spiderwick.exe+1299A0, 83 EC 10 D9 EE)
+Spiderwick.exe+1299A0:
+  jmp fcCode
+fc_return:
+
+// ===== Hook 2: sub_4356F0 — skip camera position copy =====
+alloc(copyBlockHook, $80, Spiderwick.exe+356F0)
+label(cb_original)
+label(cb_return)
+
+copyBlockHook:
+  cmp dword ptr [fc_enabled], 1
+  jne cb_original
+  // Block CopyPositionBlock calls targeting the camera struct
+  push eax
+  push ebx
+  mov eax, [pCamStruct]
+  mov ebx, ecx
+  sub ebx, eax
+  cmp ebx, $900
+  pop ebx
+  pop eax
+  jb cb_skip
+  jmp cb_original
+cb_skip:
+  ret 4
+cb_original:
+  push esi
+  push edi
+  mov edi, [esp+0C]
+  jmp cb_return
+
+assert(Spiderwick.exe+356F0, 56 57 8B 7C 24 0C)
+Spiderwick.exe+356F0:
+  jmp copyBlockHook
+  nop
+cb_return:
+
+// ===== Hook 3: sub_43DA50 (MonocleUpdate) — graceful skip =====
+// Returns 1 WITHOUT setting monocle flags (0xBB, 0xB9).
+// MainCameraComponent sees "monocle handled it" → skips normal camera.
+// But engine stays in normal mode → CameraTick + portal pipeline work.
+// Also sets bit 0x20 in camera_obj+0x78C so CameraTick fires each frame.
+alloc(monoHook, $80, Spiderwick.exe+3DA50)
+label(mono_normal)
+label(mono_return)
+
+monoHook:
+  mov [fc_mono_this], ecx
+
+  cmp dword ptr [fc_enabled], 1
+  jne mono_normal
+
+  // === GRACEFUL: return 1 without monocle flags ===
+  // Do NOT set bit 0x20 — keep native block SKIPPED.
+  // Lua writes sector directly via AABB lookup.
+  // Without bit 0x20, CameraTick skips native block → no SectorTransition
+  // → no overwrite of camera_obj+0x788 → Lua sector write persists.
+  mov al, 1
+  ret $0C
+
+mono_normal:
+  sub esp, 60
+  push ebx
+  push esi
+  jmp mono_return
+
+assert(Spiderwick.exe+3DA50, 83 EC 60 53 56)
+Spiderwick.exe+3DA50:
+  jmp monoHook
+mono_return:
+
+// ===== Hook 5: Force ALL sectors visible in SectorRenderSubmit =====
+// In v20 (no monocle mode), SectorRenderSubmit IS called by VM.
+// We hook the visibility check to force vis=1 → ALL sectors rendered.
+// At 0x1C93FB4: cmp byte ptr [eax+edi*8], 0; jz skip
+alloc(renderHook, $80, Spiderwick.exe+1893F90)
+label(rh_original)
+label(rh_continue)
+label(rh_skip)
+
+renderHook:
+  cmp dword ptr [fc_enabled], 1
+  jne rh_original
+
+  // Force this sector visible
+  mov byte ptr [eax+edi*8], 1
+  jmp rh_continue
+
+rh_original:
+  cmp byte ptr [eax+edi*8], 0
+  jz rh_skip
+
+rh_continue:
+  jmp Spiderwick.exe+1893FBE
+
+rh_skip:
+  jmp Spiderwick.exe+18940BA
+
+assert(Spiderwick.exe+1893FB4, 80 3C F8 00 0F 84 FC 00 00 00)
+Spiderwick.exe+1893FB4:
+  jmp renderHook
+  nop
+  nop
+  nop
+  nop
+  nop
+
+// ===== DebugCam object for input blocking =====
+alloc(dbgCamObj, $80)
+registersymbol(dbgCamObj)
+
+alloc(dbgCamInit, 64, Spiderwick.exe)
+registersymbol(dbgCamInit)
+
+dbgCamInit:
+  pushad
+  mov edi, dbgCamObj
+  xor eax, eax
+  mov ecx, 20
+  rep stosd
+  mov ecx, dbgCamObj
+  call Spiderwick.exe+40910
+  popad
+  ret
+
+{$lua}
+--[[
+  Spiderwick Freecam v20 — Graceful (No Monocle Mode)
+
+  KEY CHANGE: MonocleUpdate returns 1 without setting monocle flags.
+  Engine stays in normal mode → full portal render pipeline active.
+  Hook 6 writes freecam position to camera matrices → SectorTransition
+  computes freecam's sector → rooms render correctly.
+
+  Controls:
+    INSERT       Toggle freecam ON/OFF
+    WASD         Move (camera-relative, pitch-aware)
+    SPACE/CTRL   Up/Down
+    MOUSE        Rotate camera
+    ARROWS       Rotate yaw/pitch (additional)
+    NUM+/-       Speed
+    HOME         Reset speed
+    MID MOUSE    Teleport player to camera
+    F6           Debug dump
+]]
+
+local POS_X  = 0x3B8
+local POS_Y  = 0x3BC
+local POS_Z  = 0x3C0
+local MOVE_SPEED  = 0.5
+local ROT_SPEED   = 0.04
+local MOUSE_SENS  = 0.04
+local PITCH_LIMIT = 1.5
+
+-- Mouse delta addresses (written every frame by vtable[7] sub_43DC10)
+local MOUSE_DX_ADDR = 0x0072FC14
+local MOUSE_DY_ADDR = 0x0072FC10
+
+local active = false
+local speedMul = 1.0
+local camYaw, camPitch = nil, nil
+local camX, camY, camZ = nil, nil, nil
+local toggleCD = false
+local f6CD = false
+local mmbCD = false
+local CHEAT_FLAGS = 0x6E1494
+local dbgCamCreated = false
+local f7CD = false
+
+local function addr(sym)
+  local ok, a = pcall(getAddress, sym)
+  if not ok or not a or a == 0 then return nil end
+  return a
+end
+
+local function camBase()
+  local p = addr("pCamStruct")
+  if not p then return nil end
+  local b = readInteger(p)
+  return (b and b ~= 0) and b or nil
+end
+
+local function key(vk) return isKeyPressed(vk) end
+
+local function extractAngles(b)
+  local r00 = readFloat(b + 0x00)
+  local r10 = readFloat(b + 0x10)
+  local r24 = readFloat(b + 0x24)
+  local r28 = readFloat(b + 0x28)
+  if not r00 or not r10 then return 0, 0 end
+  return math.atan2(r10, r00), math.atan2(r24, r28)
+end
+
+-- AABB sector lookup: find which sector contains a world position
+local function findSectorAABB(x, y, z)
+  local ws = readInteger(0xE416C4)
+  if not ws or ws == 0 then return nil end
+  local secArr = readInteger(ws + 0x64)
+  if not secArr then return nil end
+  local secCnt = readInteger(0xE416C8) or 0
+  for i = 0, secCnt - 1 do
+    local sd = readInteger(secArr + 4 * i)
+    if sd and sd ~= 0 then
+      local minX = readFloat(sd + 0x10)
+      local minY = readFloat(sd + 0x14)
+      local minZ = readFloat(sd + 0x18)
+      local maxX = readFloat(sd + 0x20)
+      local maxY = readFloat(sd + 0x24)
+      local maxZ = readFloat(sd + 0x28)
+      if minX and maxX and
+         x >= minX and x <= maxX and
+         y >= minY and y <= maxY and
+         z >= minZ and z <= maxZ then
+        return i
+      end
+    end
+  end
+  return nil  -- outside all sector AABBs
+end
+
+local function writeEyeTarget()
+  local fc = addr("fc_eye")
+  if not fc then return end
+  writeFloat(fc, camX)
+  writeFloat(fc + 4, camY)
+  writeFloat(fc + 8, camZ)
+
+  local cy, sy = math.cos(camYaw), math.sin(camYaw)
+  local cp, sp = math.cos(camPitch), math.sin(camPitch)
+  local ft = addr("fc_target")
+  if not ft then return end
+  writeFloat(ft, camX + sy * cp)
+  writeFloat(ft + 4, camY + cy * cp)
+  writeFloat(ft + 8, camZ - sp)
+end
+
+local function tick()
+  -- INSERT: toggle
+  if key(0x2D) then
+    if not toggleCD then
+      active = not active
+      toggleCD = true
+      if active then
+        local b = camBase()
+        if b then
+          camYaw, camPitch = extractAngles(b)
+          camX = readFloat(b + POS_X)
+          camY = readFloat(b + POS_Y)
+          camZ = readFloat(b + POS_Z)
+          writeEyeTarget()
+          -- Init prev_eye = current eye for smooth sector transition
+          local pe = addr("fc_prev_eye")
+          if pe then
+            writeFloat(pe, camX)
+            writeFloat(pe + 4, camY)
+            writeFloat(pe + 8, camZ)
+          end
+          writeInteger(addr("fc_enabled"), 1)
+          -- HUD hide (cheat flag bit 2)
+          local flags = readInteger(CHEAT_FLAGS) or 0
+          writeInteger(CHEAT_FLAGS, flags + (flags % 8 < 4 and 4 or 0))
+          -- Block character movement via DebugCam InputValidator
+          if not dbgCamCreated then
+            local initAddr = addr("dbgCamInit")
+            if initAddr then
+              executeCodeEx(0, 5000, initAddr)
+              dbgCamCreated = true
+            end
+          end
+          local dco = addr("dbgCamObj")
+          if dco then writeInteger(dco + 0x70, 0) end
+          print(string.format("[FC] ON yaw=%.1f pitch=%.1f pos=(%.1f,%.1f,%.1f)",
+            math.deg(camYaw), math.deg(camPitch), camX, camY, camZ))
+        else
+          print("[FC] ERROR: pCamStruct not found")
+          active = false
+        end
+      else
+        writeInteger(addr("fc_enabled"), 0)
+        -- Restore HUD
+        local flags = readInteger(CHEAT_FLAGS) or 0
+        writeInteger(CHEAT_FLAGS, flags - (flags % 8 >= 4 and 4 or 0))
+        -- Restore character movement
+        local dco = addr("dbgCamObj")
+        if dco then writeInteger(dco + 0x70, 0xFFFFFFFF) end
+        print("[FC] OFF")
+      end
+    end
+  else toggleCD = false end
+
+  -- F6: debug
+  if key(0x75) then
+    if not f6CD then
+      f6CD = true
+      if camYaw then
+        print(string.format("[FC] yaw=%.1f pitch=%.1f spd=%.2f pos=(%.1f,%.1f,%.1f)",
+          math.deg(camYaw), math.deg(camPitch), speedMul, camX, camY, camZ))
+        local base = getAddress("Spiderwick.exe")
+        if base then
+          local camObj = readInteger(base + 0x32F670)
+          if camObj and camObj ~= 0 then
+            local sector = readInteger(camObj + 0x788) or -1
+            local flags = readInteger(camObj + 0x78C) or 0
+            print(string.format("[FC] camera_obj = 0x%X, sector = %d, flags = 0x%X", camObj, sector, flags))
+            print(string.format("[FC] +0x864 = %.1f, %.1f, %.1f",
+              readFloat(camObj + 0x864) or 0, readFloat(camObj + 0x868) or 0, readFloat(camObj + 0x86C) or 0))
+            print(string.format("[FC] +0x7C0 = %.1f, %.1f, %.1f  +0x800 = %.1f, %.1f, %.1f",
+              readFloat(camObj + 0x7C0) or 0, readFloat(camObj + 0x7C4) or 0, readFloat(camObj + 0x7C8) or 0,
+              readFloat(camObj + 0x800) or 0, readFloat(camObj + 0x804) or 0, readFloat(camObj + 0x808) or 0))
+            -- Visibility array
+            local visArr = readInteger(0xE416CC)
+            local secCnt = readInteger(0xE416C8) or 0
+            if visArr and secCnt > 0 then
+              print(string.format("[FC] Visibility array @ 0x%X, %d sectors:", visArr, secCnt))
+              for i = 0, secCnt - 1 do
+                local vis = readBytes(visArr + i * 8, 1) or 0
+                local side = readBytes(visArr + i * 8 + 1, 1) or 0
+                local frust = readInteger(visArr + i * 8 + 4) or 0
+                print(string.format("[FC]   sector %2d: vis=%d side=%d frustum=0x%X", i, vis, side, frust))
+              end
+            end
+          end
+        end
+      end
+    end
+  else f6CD = false end
+
+  -- F7: dump sector data structures to find bounding boxes
+  if key(0x76) then
+    if not f7CD then
+      f7CD = true
+      local ws = readInteger(0xE416C4)
+      if ws and ws ~= 0 then
+        local secArr = readInteger(ws + 0x64)
+        local portalBase = readInteger(ws + 0x68)
+        local secCnt = readInteger(0xE416C8) or 0
+        print(string.format("[DUMP] WorldState=0x%X secArr=0x%X portalBase=0x%X count=%d", ws, secArr or 0, portalBase or 0, secCnt))
+        for i = 0, math.min(secCnt - 1, 13) do
+          local sd = readInteger(secArr + 4 * i)
+          if sd and sd ~= 0 then
+            local nPortals = readInteger(sd + 0x5C) or 0
+            local renderId = readInteger(sd + 0x80) or 0
+            print(string.format("[DUMP] Sector %d @ 0x%X  portals=%d render_id=%d", i, sd, nPortals, renderId))
+            -- Dump first 24 DWORDs (96 bytes) as floats — look for bounding box
+            local line = "  floats:"
+            for j = 0, 23 do
+              local f = readFloat(sd + j * 4)
+              if f and math.abs(f) > 0.001 and math.abs(f) < 10000 then
+                line = line .. string.format(" [%02X]=%.1f", j*4, f)
+              end
+            end
+            print(line)
+          end
+        end
+      end
+    end
+  else f7CD = false end
+
+  -- Middle mouse: teleport player to camera
+  if key(0x04) then
+    if not mmbCD then
+      mmbCD = true
+      local pp = addr("pPlayer")
+      if pp then
+        local player = readInteger(pp)
+        if player and player ~= 0 and camX then
+          writeFloat(player + 0x68, camX)
+          writeFloat(player + 0x6C, camY)
+          writeFloat(player + 0x70, camZ)
+          print(string.format("[FC] Teleported player to (%.1f,%.1f,%.1f)", camX, camY, camZ))
+        end
+      end
+    end
+  else mmbCD = false end
+
+  if not active then return end
+
+  local b = camBase()
+  if not b then return end
+
+  -- Mouse rotation
+  local mouseDX = readFloat(MOUSE_DX_ADDR) or 0
+  local mouseDY = readFloat(MOUSE_DY_ADDR) or 0
+  camYaw = camYaw - mouseDX * MOUSE_SENS
+  camPitch = camPitch + mouseDY * MOUSE_SENS
+
+  -- Arrow keys
+  if key(0x25) then camYaw = camYaw - ROT_SPEED end
+  if key(0x27) then camYaw = camYaw + ROT_SPEED end
+  if key(0x26) then camPitch = camPitch - ROT_SPEED end
+  if key(0x28) then camPitch = camPitch + ROT_SPEED end
+  if camPitch > PITCH_LIMIT then camPitch = PITCH_LIMIT end
+  if camPitch < -PITCH_LIMIT then camPitch = -PITCH_LIMIT end
+
+  -- Movement
+  local spd = MOVE_SPEED * speedMul
+  if key(0x10) then spd = spd * 3.0 end
+  local cp = math.cos(camPitch)
+  local sp = math.sin(camPitch)
+  local fwdX = math.sin(camYaw) * cp
+  local fwdY = math.cos(camYaw) * cp
+  local fwdZ = -sp
+  local rightX = math.cos(camYaw)
+  local rightY = -math.sin(camYaw)
+
+  if key(0x57) then camX = camX + spd*fwdX; camY = camY + spd*fwdY; camZ = camZ + spd*fwdZ end
+  if key(0x53) then camX = camX - spd*fwdX; camY = camY - spd*fwdY; camZ = camZ - spd*fwdZ end
+  if key(0x41) then camX = camX - spd*rightX; camY = camY - spd*rightY end
+  if key(0x44) then camX = camX + spd*rightX; camY = camY + spd*rightY end
+  if key(0x20) then camZ = camZ + spd end
+  if key(0xA2) then camZ = camZ - spd end
+
+  if key(0x6B) then speedMul = speedMul * 1.03 end
+  if key(0x6D) then speedMul = speedMul / 1.03 end
+  if key(0x21) then speedMul = speedMul * 1.1 end
+  if key(0x22) then speedMul = speedMul / 1.1 end
+  if key(0x24) then speedMul = 1.0 end
+
+  writeEyeTarget()
+
+  -- === SECTOR UPDATE: AABB lookup → write directly to camera_obj+0x788 ===
+  local base = getAddress("Spiderwick.exe")
+  if base then
+    local camObj = readInteger(base + 0x32F670)
+    if camObj and camObj ~= 0 then
+      local sector = findSectorAABB(camX, camY, camZ)
+      if sector then
+        writeInteger(camObj + 0x788, sector)
+      end
+    end
+  end
+end
+
+if freecamTimer then freecamTimer.Destroy() end
+freecamTimer = createTimer(getMainForm())
+freecamTimer.Interval = 16
+freecamTimer.OnTimer = tick
+freecamTimer.Enabled = true
+
+print("============================================")
+print("  Spiderwick Freecam v20 — GRACEFUL")
+print("  No monocle mode — full render pipeline")
+print("  INSERT     = toggle ON/OFF")
+print("  WASD       = move, SPACE/CTRL = up/down")
+print("  SHIFT      = 3x speed")
+print("  MOUSE      = rotate camera")
+print("  NUM+/-     = speed, PgUp/Dn = fast speed")
+print("  MID MOUSE  = teleport player to camera")
+print("  F6         = debug (sector, flags, vis array)")
+print("============================================")
+
+{$asm}
+
+[DISABLE]
+{$lua}
+if freecamTimer then
+  freecamTimer.Destroy()
+  freecamTimer = nil
+end
+local ok, e = pcall(getAddress, "fc_enabled")
+if ok and e and e ~= 0 then writeInteger(e, 0) end
+-- Restore HUD + input
+local ok3, cf = pcall(readInteger, 0x6E1494)
+if ok3 and cf then
+  if cf % 8 >= 4 then writeInteger(0x6E1494, cf - 4) end
+end
+local ok4, dco = pcall(getAddress, "dbgCamObj")
+if ok4 and dco and dco ~= 0 then writeInteger(dco + 0x70, 0xFFFFFFFF) end
+active = false
+camYaw = nil
+print("[FC] unloaded")
+
+{$asm}
+Spiderwick.exe+1299A0:
+  db 83 EC 10 D9 EE
+
+Spiderwick.exe+356F0:
+  db 56 57 8B 7C 24 0C
+
+Spiderwick.exe+3DA50:
+  db 83 EC 60 53 56
+
+// Restore Hook 5: visibility check
+Spiderwick.exe+1893FB4:
+  db 80 3C F8 00 0F 84 FC 00 00 00
+
+unregistersymbol(fc_mono_this)
+unregistersymbol(fc_game_target)
+unregistersymbol(fc_game_eye)
+unregistersymbol(fc_target)
+unregistersymbol(fc_eye)
+unregistersymbol(fc_enabled)
+unregistersymbol(fcData)
+dealloc(fcData)
+dealloc(fcCode)
+dealloc(copyBlockHook)
+dealloc(monoHook)
+dealloc(renderHook)
+unregistersymbol(dbgCamInit)
+dealloc(dbgCamInit)
+unregistersymbol(dbgCamObj)
