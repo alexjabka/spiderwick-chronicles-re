@@ -27,6 +27,11 @@ A complete reverse engineering and modding toolkit for *The Spiderwick Chronicle
 - **Engine Documentation** — 160+ markdown docs covering every reversed engine subsystem
 - **IDA Analysis** — 150+ named functions, complete type registry, VM interpreter, render pipeline
 
+<p align="center">
+  <img src="docs/preview_world.jpg" alt="SpiderView — World Viewer" width="48%">
+  <img src="docs/preview_model.jpg" alt="SpiderView — Character Model Viewer" width="48%">
+</p>
+
 ---
 
 ## Quick Start
