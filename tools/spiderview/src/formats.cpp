@@ -1473,6 +1473,7 @@ NM40MeshResult ParseNM40Batches(const uint8_t* nm40, uint32_t nm40Size) {
                     batch.colors.push_back(nm40[o+14]); batch.colors.push_back(nm40[o+15]);
                 }
             }
+            // NM40 sub-batch indices are triangle lists (NOT strips like PCWB PCRD)
             uint32_t tic = (ic / 3) * 3;
             for (uint32_t i = 0; i < tic; i++) {
                 uint16_t idx; memcpy(&idx, nm40+idxOff+i*2, 2);
